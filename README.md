@@ -15,6 +15,17 @@ Nachfolger mit eigener Platine, TMC2209 und Regelung direkt am Gerät: Ofensteue
 | Drehgeber (KY-040 o. ä.) | A 35, B 32, Taster 13 |
 | Status-LED | 2 |
 
+### Platine
+Eigene Trägerplatine (EasyEDA, Jänner 2025, gefertigt bei JLCPCB) für ESP32-DevKit, A4988, MAX6675-Modul,
+Spannungsregler 12 V → 5 V, Sicherungshalter und Schraubklemmen (12 V, Motor 2B 2A 1B 1A, Drehgeber CLK DT SW + −).
+
+| | |
+|---|---|
+| ![Platine oben](hardware/platine-v4-oben.png) | ![Platine unten](hardware/platine-v4-unten.png) |
+
+Fertigungsdaten: [`hardware/ofensteuerung-v4-gerber.zip`](hardware/ofensteuerung-v4-gerber.zip) (direkt bei JLCPCB hochladen),
+einzeln in `hardware/gerber/`.
+
 GPIO 34–39 haben keinen internen Pull-up: Hat das Drehgeber-Modul keinen, 10 kΩ nach 3,3 V an GPIO 35.
 
 Klappenstellung in Schritten: **0 = zu, 2100 = offen**, Drehgeber und Slider in 25er-Schritten.
@@ -23,6 +34,7 @@ Klappenstellung in Schritten: **0 = zu, 2100 = offen**, Drehgeber und Slider in 
 | Datei | Inhalt |
 |---|---|
 | `esphome/ofensteuerung-v4.yaml` | ESPHome-Firmware |
+| `hardware/` | Platine: Gerber-Dateien und Vorschaubilder |
 | `esphome/secrets.example.yaml` | Vorlage für die `secrets.yaml` |
 | `homeassistant/script_ofen_abbrand_regeln.yaml` | Regelung eines Abbrands (Skript) |
 | `homeassistant/automation_ofensteuerung_taster.yaml` | Taster am Gerät startet/stoppt die Regelung |
