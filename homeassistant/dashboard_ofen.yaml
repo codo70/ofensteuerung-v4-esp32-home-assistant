@@ -1,0 +1,102 @@
+# Dashboard-Ansicht „Ofen“ (Sections-Ansicht)
+# Einfügen: Dashboard bearbeiten → Ansicht hinzufügen → ⋮ → „In YAML bearbeiten“ → Inhalt ersetzen.
+# Die Kachel „Luftzufuhr“ braucht die HACS-Karte „slider-button-card“, sie kann auch weggelassen werden.
+# Aus dem Original entfernt: Grafana-Einbettung, Kamera, Raumtemperatur (installationsspezifisch).
+type: sections
+max_columns: 4
+title: Ofen
+path: ofen
+icon: mdi:radiator
+sections:
+  - type: grid
+    cards:
+      - type: heading
+        heading: Ofen
+        heading_style: title
+      - type: shortcut
+        label: Anheizen starten
+        icon: mdi:fire
+        tap_action:
+          action: perform-action
+          perform_action: script.turn_on
+          target:
+            entity_id: script.ofen_anheizen_starten
+          confirmation:
+            text: Klappe voll öffnen und Abbrandregelung starten?
+      - type: entities
+        title: Ofen
+        show_header_toggle: true
+        state_color: true
+        entities:
+          - entity: sensor.ofensteuerung_v4_stellungsanzeige
+            secondary_info: last-changed
+          - entity: sensor.ofensteuerung_v4_ofen_temperatur
+            secondary_info: none
+          - entity: number.ofensteuerung_v4_stepper_feinsteuerung
+          - entity: sensor.ofensteuerung_v4_stepper_position
+          - entity: button.ofensteuerung_v4_stepper_luftzufuhr_offen
+            name: Luftzufuhr offen
+          - entity: button.ofensteuerung_v4_stepper_luftzufuhr_geschlossen
+            name: Luftzufuhr geschlossen
+          - entity: binary_sensor.ofensteuerung_v4_stepper_encoder_button
+      - type: custom:slider-button-card
+        entity: number.ofensteuerung_v4_stepper_feinsteuerung
+        name: Luftzufuhr
+        attribute: friendly_name
+        show_name: true
+        show_state: true
+        compact: true
+        slider:
+          direction: right-left
+          background: solid
+          use_percentage_bg_opacity: true
+          use_state_color: true
+          show_track: true
+          toggle_on_click: false
+          force_square: false
+        icon:
+          show: true
+          use_state_color: true
+          icon: mdi:valve
+          tap_action:
+            action: more-info
+        action_button:
+          mode: toggle
+          icon: mdi:power
+          show: true
+          show_spinner: true
+          tap_action:
+            action: toggle
+      - type: statistics-graph
+        title: Ofentemperatur
+        entities:
+          - sensor.ofensteuerung_v4_ofen_temperatur
+        chart_type: bar
+        period: 5minute
+        days_to_show: 2
+        stat_types:
+          - max
+        min_y_axis: 0
+        max_y_axis: 750
+        fit_y_data: true
+        hide_legend: false
+        logarithmic_scale: false
+  - type: grid
+    cards:
+      - type: heading
+        heading: Temperatur
+      - type: gauge
+        entity: sensor.ofensteuerung_v4_ofen_temperatur
+        min: 0
+        max: 750
+        needle: true
+        unit: "°C"
+        severity:
+          green: 200
+          yellow: 300
+          red: 400
+        grid_options:
+          columns: full
+          rows: 3
+        tap_action:
+          action: more-info

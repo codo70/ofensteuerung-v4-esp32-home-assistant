@@ -39,9 +39,17 @@ Klappenstellung in Schritten: **0 = zu, 2100 = offen**, Drehgeber und Slider in 
 | `homeassistant/script_ofen_abbrand_regeln.yaml` | Regelung eines Abbrands (Skript) |
 | `homeassistant/automation_ofensteuerung_taster.yaml` | Taster am Gerät startet/stoppt die Regelung |
 | `homeassistant/script_ofen_anheizen_starten.yaml` | Dashboard-Button „Anheizen“ |
+| `homeassistant/helfer_ofen_temperatur_max_15_min.yaml` | Statistik-Helfer 15-min-Maximum (für das Regelskript) |
+| `homeassistant/dashboard_ofen.yaml` | Dashboard-Ansicht „Ofen“ |
+| `homeassistant/automation_klima_ofen_lueften.yaml` | optional: Klimaanlage verteilt die Ofenwärme |
 
-Zusätzlich in Home Assistant nötig: Statistik-Helfer **„Ofen Temperatur Max 15 min“**
-(Quelle: Ofen Temperatur, Merkmal Maximum, Zeitraum 15 min) und ein Außentemperatur-Sensor.
+### Einrichtung in Home Assistant
+1. ESPHome-Gerät einbinden (`esphome/ofensteuerung-v4.yaml`).
+2. Statistik-Helfer anlegen (`homeassistant/helfer_ofen_temperatur_max_15_min.yaml`).
+3. Skripte `ofen_abbrand_regeln` und `ofen_anheizen_starten` anlegen, dann die Automation „Ofensteuerung Taster“.
+4. Optional: Dashboard-Ansicht und „Klima Ofen Lüften“.
+
+Das Regelskript braucht außerdem einen Außentemperatur-Sensor (hier `sensor.gw1200a_outdoor_temperature`).
 Die Entitäts-IDs in den Dateien an die eigene Installation anpassen.
 
 ## Firmware

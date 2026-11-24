@@ -1,0 +1,26 @@
+# Statistik-Helfer „Ofen Temperatur Max 15 min“
+# Wird vom Skript ofen_abbrand_regeln gebraucht (Ende der Flammphase: Abfall unter das 15-min-Maximum).
+#
+# Anlegen über die Oberfläche (so ist es im Original eingerichtet):
+#   Einstellungen → Geräte & Dienste → Helfer → Helfer erstellen → Statistik
+#   Entität:          sensor.ofensteuerung_v4_ofen_temperatur
+#   Merkmal:          Maximum (value_max)
+#   Stichprobengröße: 100
+#   Höchstalter:      15 Minuten
+#   Letzte Stichprobe behalten: ja
+#   Genauigkeit:      1
+#   Name:             Ofen Temperatur Max 15 min
+#   → ergibt sensor.esszimmer_ofensteuerung_ofen_temperatur_max_15_min
+#     (Entitäts-ID hängt vom Bereich ab, ggf. im Skript anpassen)
+#
+# Alternativ gleichwertig in configuration.yaml:
+sensor:
+  - platform: statistics
+    name: "Ofen Temperatur Max 15 min"
+    entity_id: sensor.ofensteuerung_v4_ofen_temperatur
+    state_characteristic: value_max
+    sampling_size: 100
+    max_age:
+      minutes: 15
+    keep_last_sample: true
+    precision: 1
