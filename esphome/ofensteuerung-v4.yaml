@@ -1,0 +1,416 @@
+substitutions:
+  name: ofensteuerung-v4
+  friendly_name: Ofensteuerung
+  max_steps: "2100"
+  step_size: "25"
+  nachlegen_steps: "1000"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+  project:
+    name: esphome.web
+    version: dev
+
+  on_boot:
+    priority: -10
+    then:
+      - lambda: |-
+          ESP_LOGI("startup", "Restoring stepper position (NO movement): %d", id(saved_stepper_pos));
+          id(my_stepper).report_position(id(saved_stepper_pos));
+          id(my_stepper).set_target(id(saved_stepper_pos));
+          id(last_target) = id(saved_stepper_pos);
+          id(last_position) = id(saved_stepper_pos);
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+# Gespeicherte Werte (restore_value) schneller ins Flash schreiben,
+# damit bei einem Neustart/Stromausfall die Position aktuell ist.
+preferences:
+  flash_write_interval: 5s
+  
+logger:
+
+# Fuer Reset-Grund-Anzeige (siehe text_sensor)
+debug:
+  update_interval: 30s
+
+api:
+  encryption:
+    key: !secret ofen_v4_api_key
+
+ota:
+  - platform: esphome
+    password: !secret ofen_v4_ota_passwort
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: !secret ofen_v4_ip
+    gateway: !secret netz_gateway
+    subnet: 255.255.255.0
+    dns1: !secret netz_dns
+
+  ap:
+    ssid: "OfensteuerungV4"
+    password: !secret ofen_v4_ap_passwort
+    
+esp32_ble_tracker:
+
+bluetooth_proxy:
+  active: true
+improv_serial:
+
+captive_portal:
+
+web_server:
+  version: 3
+ 
+# ----------------------------------------------------
+# GLOBALS
+# ----------------------------------------------------
+globals:
+  - id: button_press_time
+    type: unsigned long
+    restore_value: no
+
+  - id: saved_stepper_pos
+    type: int
+    restore_value: yes
+    initial_value: "0"
+
+  - id: last_save_time
+    type: unsigned long
+    restore_value: no
+    initial_value: "0"
+
+  - id: last_position
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: crash_counter
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: is_moving
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: last_target
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: crash_detected
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+# ----------------------------------------------------
+# LED on GPIO2 (warning: strapping pin)
+# ----------------------------------------------------
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: onboard_led
+
+# ----------------------------------------------------
+# Blink script (non-blocking)
+# ----------------------------------------------------
+script:
+  - id: blink_led_3x
+    mode: restart
+    then:
+      - repeat:
+          count: 3
+          then:
+            - output.turn_on: onboard_led
+            - delay: 200ms
+            - output.turn_off: onboard_led
+            - delay: 400ms
+  - id: fahre_klappe
+    mode: restart
+    parameters:
+      tgt: int
+    then:
+        - lambda: |-
+            id(my_stepper).set_target(tgt);
+            id(stepper_fine).publish_state(tgt);
+            id(is_moving) = true;
+            id(last_target) = tgt;  
+# ----------------------------------------------------
+# ENCODER BUTTON (GPIO13)
+# ----------------------------------------------------
+binary_sensor:
+    - platform: gpio
+      pin:
+        number: GPIO13
+        mode: INPUT_PULLUP
+        inverted: true
+      name: "Stepper Encoder Button"
+      id: encoder_button
+      filters:
+        - delayed_on_off: 20ms   # Entprellen, damit ein Klick nicht als zwei zählt
+      on_press:
+        - script.execute: blink_led_3x
+      on_multi_click:
+        # Doppelklick → Nachlegen
+        - timing:
+            - ON for at most 1s
+            - OFF for at most 0.5s
+            - ON for at most 1s
+            - OFF for at least 0.2s
+          then:
+            - script.execute:
+                id: fahre_klappe
+                tgt: ${nachlegen_steps}
+            - event.trigger:
+                id: taster_event
+                event_type: nachlegen
+        # Einfachklick → Anheizen (voll offen)
+        - timing:
+            - ON for at most 1s
+            - OFF for at least 0.5s
+          then:
+            - script.execute:
+                id: fahre_klappe
+                tgt: ${max_steps}
+            - event.trigger:
+                id: taster_event
+                event_type: anheizen
+        # Lang drücken → halb offen (wie bisher) + Regelung abbrechen
+        - timing:
+            - ON for at least 1.5s
+          then:
+            - script.execute:
+                id: fahre_klappe
+                tgt: !lambda 'return ${max_steps} / 2;'
+            - event.trigger:
+                id: taster_event
+                event_type: lang
+
+event:
+    - platform: template
+      name: "Taster"
+      id: taster_event
+      event_types:
+        - anheizen
+        - nachlegen
+        - lang
+# ----------------------------------------------------
+# MAX6675 Sensor
+# ----------------------------------------------------
+spi:
+  clk_pin: GPIO19
+  miso_pin: GPIO17
+  mosi_pin: GPIO23
+
+sensor:
+  - platform: max6675
+    name: "Ofen Temperatur"
+    cs_pin: GPIO18
+    update_interval: 30s
+# Speichern für Webserver-History
+    filters:
+      - delta: 0.5  # nur Werteänderungen größer 0.5°C speichern
+      
+  - platform: template    
+    name: "Stepper Position"
+    id: stepper_position
+    lambda: |-
+      return id(my_stepper).current_position;
+    update_interval: 1s
+
+# Uptime: zeigt, ob der ESP zwischendurch neu gestartet ist
+  - platform: uptime
+    name: "Uptime"
+# Rotary Encoder → steuert Slider + Stepper    
+  - platform: rotary_encoder
+    id: stepper_encoder
+    pin_a:
+      number: GPIO35
+      mode: INPUT
+    pin_b: GPIO32
+    resolution: 1
+    filters:
+      - debounce: 5ms
+
+    on_clockwise:
+      - lambda: |-
+          int new_pos = id(stepper_fine).state + ${step_size};
+          if (new_pos > ${max_steps}) new_pos = ${max_steps};
+          id(stepper_fine).publish_state(new_pos);
+          id(my_stepper).set_target(new_pos);
+          id(is_moving) = true;
+          id(last_target) = new_pos;
+
+    on_anticlockwise:
+      - lambda: |-
+          int new_pos = id(stepper_fine).state - ${step_size};
+          if (new_pos < 0) new_pos = 0;
+          id(stepper_fine).publish_state(new_pos);
+          id(my_stepper).set_target(new_pos);
+          id(is_moving) = true;
+          id(last_target) = new_pos;
+
+# ----------------------------------------------------
+# BUTTONS
+# ----------------------------------------------------
+button:
+  - platform: template
+    name: "Stepper: Luftzufuhr geschlossen"
+    id: btn_home
+    on_press:
+      - stepper.set_target:
+          id: my_stepper
+          target: 0
+      - lambda: |-
+          id(is_moving) = true;
+          id(last_target) = 0;
+
+  - platform: template
+    name: "Stepper: Luftzufuhr offen"
+    id: btn_end
+    on_press:
+      - stepper.set_target:
+          id: my_stepper
+          target: ${max_steps}
+      - lambda: |-
+          id(is_moving) = true;
+          id(last_target) = ${max_steps};
+  # Referenz setzen: Klappe von Hand auf "zu" stellen, dann diesen Button druecken.
+  # Setzt die Position auf 0, ohne dass der Motor faehrt.
+  - platform: template
+    name: "Stepper: Position als zu setzen"
+    id: btn_set_zero
+    on_press:
+      - lambda: |-
+          id(my_stepper).report_position(0);
+          id(my_stepper).set_target(0);
+          id(saved_stepper_pos) = 0;
+          id(last_target) = 0;
+          id(last_position) = 0;
+          id(is_moving) = false;
+          id(crash_counter) = 0;
+          id(stepper_fine).publish_state(0);
+          ESP_LOGI("reference", "Position manuell auf 0 (zu) gesetzt");
+ 
+# ----------------------------------------------------
+# SLIDER (Number)
+# ----------------------------------------------------
+number:
+  - platform: template
+    name: "Stepper Feinsteuerung"
+    id: stepper_fine
+    min_value: 0
+    max_value: ${max_steps}
+    step: ${step_size}
+    mode: slider
+    set_action:
+      - stepper.set_target:
+          id: my_stepper
+          target: !lambda 'return (int)x;'
+      - lambda: |-
+          int tgt = (int) x;
+          id(is_moving) = true;
+          id(last_target) = tgt;
+
+# ----------------------------------------------------
+# INTERVAL – Saving + Crash detection
+# ----------------------------------------------------
+interval:
+  - interval: 200ms
+    then:
+      # Save persistent position (nur bei relevanter Änderung)
+      - lambda: |-
+          int current = id(my_stepper).current_position;
+          unsigned long now = millis();
+
+          if (abs(current - id(saved_stepper_pos)) >= 10 &&
+              (now - id(last_save_time) > 2000)) {
+            id(saved_stepper_pos) = current;
+            id(last_save_time) = now;
+            ESP_LOGI("save", "Saved stepper pos: %d", current);
+          }
+
+      # Crash detection (robust, ohne nicht-öffentliche API)
+      - lambda: |-
+          int current = id(my_stepper).current_position;
+
+          if (id(is_moving)) {
+            if (current == id(last_position)) {
+              id(crash_counter)++;
+            } else {
+              id(crash_counter) = 0;
+            }
+
+            if (id(crash_counter) > 10) {
+              ESP_LOGE("crash", "Stepper blockiert! Stoppe Motor!");
+
+              // Stop motor (= set target to current pos)
+              id(my_stepper).set_target(current);
+
+              // Mark movement as finished / stopped
+              id(is_moving) = false;
+
+              // Signal that a crash was detected (to run script outside lambda)
+              id(crash_detected) = true;
+
+              // Reset counter
+              id(crash_counter) = 0;
+            }
+
+            // Wenn Ziel erreicht (current == last_target) → Bewegung beendet
+            if (current == id(last_target)) {
+              id(is_moving) = false;
+              id(crash_counter) = 0;
+            }
+          }
+
+          id(last_position) = current;
+
+      # Wenn Crash erkannt → Blinkscript ausführen (non-blocking)
+      - if:
+          condition:
+            lambda: 'return id(crash_detected);'
+          then:
+            - script.execute: blink_led_3x
+            - lambda: |-
+                id(crash_detected) = false;
+
+      # Always sync fine slider with actual position
+      - lambda: |-
+          id(stepper_fine).publish_state(id(my_stepper).current_position);
+
+# ----------------------------------------------------
+# TEXT SENSOR
+# ----------------------------------------------------
+text_sensor:
+  - platform: template
+    name: "Stellungsanzeige"
+    id: stellung_text
+    update_interval: 300ms
+    lambda: |-
+      int pos = id(my_stepper).current_position;
+      if (pos <= 0) return {"zu"};
+      if (pos >= ${max_steps}) return {"offen"};
+      return to_string(pos);
+
+# ----------------------------------------------------
+# ⚙️ A4988 Stepper (deine Angaben)
+# ----------------------------------------------------
+stepper:
+  - platform: a4988
+    id: my_stepper
+    step_pin: GPIO26
+    dir_pin: GPIO25
+    sleep_pin: GPIO33
+    max_speed: 200 steps/s
+    acceleration: 200 steps/s^2
+    deceleration: 200 steps/s^2

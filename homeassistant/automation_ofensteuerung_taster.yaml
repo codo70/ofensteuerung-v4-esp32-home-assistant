@@ -1,0 +1,94 @@
+# Home Assistant Automation „Ofensteuerung Taster“
+# Export aus Home Assistant, Stand 24.11.2026. In automations.yaml einfügen oder im Editor unter „YAML bearbeiten“.
+- id: ofensteuerung_taster
+  alias: Ofensteuerung Taster
+  description: >-
+    Wertet die Klickarten des Encoder-Tasters am ESP32 aus. Die Klappe fährt die Firmware selbst
+    (1× = 2100, 2× = 1000, lang = 1050); hier wird nur die Regelung gestartet oder gestoppt.
+  mode: queued
+  max: 3
+  triggers:
+    - trigger: event.received
+      target:
+        entity_id: event.esszimmer_ofensteuerung_taster
+      options:
+        event_type: [anheizen]
+      id: anheizen
+    - trigger: event.received
+      target:
+        entity_id: event.esszimmer_ofensteuerung_taster
+      options:
+        event_type: [nachlegen]
+      id: nachlegen
+    - trigger: event.received
+      target:
+        entity_id: event.esszimmer_ofensteuerung_taster
+      options:
+        event_type: [lang]
+      id: lang
+  actions:
+    - choose:
+        - conditions:
+            - condition: trigger
+              id: anheizen
+            - condition: numeric_state
+              entity_id: sensor.ofensteuerung_v4_ofen_temperatur
+              below: 250
+          sequence:
+            - action: script.turn_on
+              target:
+                entity_id: script.ofen_abbrand_regeln
+              data:
+                variables:
+                  modus: anheizen
+          note: "Einfachklick bei kaltem Ofen: Abbrand von vorne regeln."
+        - conditions:
+            - condition: trigger
+              id: anheizen
+          sequence:
+            - action: script.turn_on
+              target:
+                entity_id: script.ofen_abbrand_regeln
+              data:
+                variables:
+                  modus: nachlegen
+          note: >-
+            Einfachklick bei warmem Ofen (≥ 250 °C) wie Nachlegen behandeln – Firmware hat voll geöffnet,
+            die Regelung schließt dann wieder.
+        - conditions:
+            - condition: trigger
+              id: nachlegen
+            - condition: numeric_state
+              entity_id: sensor.ofensteuerung_v4_ofen_temperatur
+              below: 200
+          sequence:
+            - action: script.turn_on
+              target:
+                entity_id: script.ofen_abbrand_regeln
+              data:
+                variables:
+                  modus: anheizen
+          note: >-
+            Doppelklick bei schwacher Glut (< 200 °C): wie Anheizen regeln – wartet bis 90 min auf > 250 °C,
+            statt die Flammphase sofort als erloschen zu beenden.
+        - conditions:
+            - condition: trigger
+              id: nachlegen
+          sequence:
+            - action: script.turn_on
+              target:
+                entity_id: script.ofen_abbrand_regeln
+              data:
+                variables:
+                  modus: nachlegen
+          note: >-
+            Doppelklick: Holz auf Glut nachgelegt. Firmware hat auf 1000 geöffnet; Regelung wartet, bis das
+            neue Holz brennt (+50 °C), und drosselt dann wie beim Anheizen.
+        - conditions:
+            - condition: trigger
+              id: lang
+          sequence:
+            - action: script.turn_off
+              target:
+                entity_id: script.ofen_abbrand_regeln
+          note: "Langer Druck: Automatik abbrechen, Klappe bleibt auf der Handstellung (1050)."

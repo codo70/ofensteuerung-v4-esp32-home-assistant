@@ -1,0 +1,61 @@
+# Ofensteuerung v4
+
+Luftklappensteuerung für einen Holzofen mit ESPHome und Home Assistant. Ein Schrittmotor stellt die Luftzufuhr,
+geregelt wird nach der Abgastemperatur im Rauchrohr. **Im Einsatz und erprobt** (Heizsaison 2026).
+
+Nachfolger mit eigener Platine, TMC2209 und Regelung direkt am Gerät: Ofensteuerung v5 (in Arbeit).
+
+## Hardware
+| Teil | Anschluss (ESP32 GPIO) |
+|---|---|
+| ESP32-DevKit (esp32dev) | – |
+| Schrittmotortreiber A4988 (Vollschritt, keine MS-Jumper) | STEP 26, DIR 25, SLEEP 33 |
+| Schrittmotor Nema 23, 2 A, an der Luftklappe | über A4988 |
+| MAX6675 + Thermoelement Typ K im Rauchrohr | SCK 19, SO 17, CS 18 |
+| Drehgeber (KY-040 o. ä.) | A 35, B 32, Taster 13 |
+| Status-LED | 2 |
+
+GPIO 34–39 haben keinen internen Pull-up: Hat das Drehgeber-Modul keinen, 10 kΩ nach 3,3 V an GPIO 35.
+
+Klappenstellung in Schritten: **0 = zu, 2100 = offen**, Drehgeber und Slider in 25er-Schritten.
+
+## Dateien
+| Datei | Inhalt |
+|---|---|
+| `esphome/ofensteuerung-v4.yaml` | ESPHome-Firmware |
+| `esphome/secrets.example.yaml` | Vorlage für die `secrets.yaml` |
+| `homeassistant/script_ofen_abbrand_regeln.yaml` | Regelung eines Abbrands (Skript) |
+| `homeassistant/automation_ofensteuerung_taster.yaml` | Taster am Gerät startet/stoppt die Regelung |
+| `homeassistant/script_ofen_anheizen_starten.yaml` | Dashboard-Button „Anheizen“ |
+
+Zusätzlich in Home Assistant nötig: Statistik-Helfer **„Ofen Temperatur Max 15 min“**
+(Quelle: Ofen Temperatur, Merkmal Maximum, Zeitraum 15 min) und ein Außentemperatur-Sensor.
+Die Entitäts-IDs in den Dateien an die eigene Installation anpassen.
+
+## Firmware
+- Taster am Drehgeber: **1× = Anheizen** (Klappe 2100), **2× = Nachlegen** (1000), **lang = Handstellung** (1050).
+  Jeder Klick löst zusätzlich das Event „Taster“ aus, das in Home Assistant die Regelung startet oder stoppt.
+- Drehgeber: Klappe in 25er-Schritten.
+- Nach einem Neustart fährt der Motor nicht los, die gespeicherte Position wird übernommen.
+- Referenz: Klappe von Hand schließen, Button „Stepper: Position als zu setzen“.
+- Grenzen: Der A4988 meldet nichts zurück, verlorene Schritte werden nicht erkannt. Die „Crash-Erkennung“ im
+  YAML erkennt keine mechanische Blockade.
+
+## Regelung (Home Assistant)
+1. **Anheizen:** Klappe offen, bis zu 90 min warten auf Abgas > 250 °C. **Nachlegen:** warten auf +50 K (max. 15 min).
+2. **Flammphase:** 250–350 °C → 700, 350–450 → 500, 450–485 → 425, 485–520 → 375, über 520 → 300 (Notbremse).
+   Die Klappe wird nur geschlossen, nie wieder geöffnet.
+3. **Ende der Flammphase:** frühestens nach 35 min, wenn das Abgas unter 300 °C oder mehr als 100 K unter dem
+   15-min-Maximum liegt. Nach einem Treffer wird 3 min gewartet und erneut geprüft, damit ein einzelner Messwert
+   nicht reicht. Sofort bei < 200 °C oder nach 3 h.
+4. **Glutphase:** 450, unter 250 °C → 300.
+5. **Ausbrand:** unter 150 °C → 200 (bei Frost 300).
+
+## Erfahrungen aus den Abbränden
+- Zu frühes, starkes Schließen nach der Spitze löst selbst einen steilen Temperaturabfall aus und kann das Feuer
+  ersticken. Deshalb: Mindestdauer der Flammphase, 100-K-Kriterium statt 50 K und 3-min-Bestätigung.
+- Der direkte Sprung 500 → 375 verursachte Einbrüche um ~140 K, die Zwischenstufe 425 verhindert das.
+- Die Glut braucht anfangs noch Luft (CO), daher 450 statt sofort 300.
+
+## Lizenz
+MIT, siehe [`LICENSE`](LICENSE).

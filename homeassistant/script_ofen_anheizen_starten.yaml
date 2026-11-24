@@ -1,0 +1,34 @@
+# Home Assistant Skript „Ofen anheizen starten“ (script.ofen_anheizen_starten)
+# Dashboard-Button als Ersatz für den Einfachklick am Taster. Export, Stand 24.11.2026.
+ofen_anheizen_starten:
+  alias: Ofen anheizen starten
+  description: >-
+    Dashboard-Ersatz für den Einfachklick am Encoder-Taster: Klappe voll auf (2100) und Regelskript starten –
+    wie Automation 'Ofensteuerung Taster' (unter 250 °C 'anheizen', sonst 'nachlegen').
+  icon: mdi:fire
+  mode: single
+  sequence:
+    - action: number.set_value
+      target:
+        entity_id: number.ofensteuerung_v4_stepper_feinsteuerung
+      data:
+        value: 2100
+    - choose:
+        - conditions:
+            - condition: numeric_state
+              entity_id: sensor.ofensteuerung_v4_ofen_temperatur
+              below: 250
+          sequence:
+            - action: script.turn_on
+              target:
+                entity_id: script.ofen_abbrand_regeln
+              data:
+                variables:
+                  modus: anheizen
+      default:
+        - action: script.turn_on
+          target:
+            entity_id: script.ofen_abbrand_regeln
+          data:
+            variables:
+              modus: nachlegen

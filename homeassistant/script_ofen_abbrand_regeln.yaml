@@ -1,0 +1,154 @@
+# Home Assistant Skript „Ofen Abbrand regeln“ (script.ofen_abbrand_regeln)
+# Export aus Home Assistant, Stand 24.11.2026. In scripts.yaml einfügen oder im Skript-Editor unter „YAML bearbeiten“.
+# Benötigt: Ofensteuerung v4 (ESPHome), Statistik-Helfer „Ofen Temperatur Max 15 min“ (Maximum, 15 min),
+# Außentemperatur-Sensor. Entitäts-IDs an die eigene Installation anpassen.
+ofen_abbrand_regeln:
+  alias: Ofen Abbrand regeln
+  description: >-
+    Abgasgeführte Luftregelung für einen Abbrand (Fühler im Rauchrohr). Modus 'anheizen' = kalter Start,
+    'nachlegen' = Holz auf Glut. In der Flammphase wird die Klappe stufenlos und nur schließend nachgeführt.
+    Das Ende der Flammphase wird erst nach einer Mindestdauer und einem anhaltenden Temperaturabfall erkannt.
+    Danach folgen Glut und Ausbrand in drei Stufen. Gestartet von der Automation 'Ofensteuerung Taster'.
+  icon: mdi:fireplace
+  mode: restart
+  fields:
+    modus:
+      name: Modus
+      description: anheizen oder nachlegen
+      required: true
+      default: anheizen
+      selector:
+        select:
+          options:
+            - anheizen
+            - nachlegen
+  sequence:
+    - variables:
+        ausbrand_unter: 150
+        ende_abfall: 100
+        ende_schwelle: 300
+        glut_start: 450
+        glut_zu_unter: 250
+        min_flamme: 2100
+        spitze_min: "{{ 400 if modus == 'anheizen' else 300 }}"
+        start: "{{ now().isoformat() }}"
+        t0: "{{ states('sensor.ofensteuerung_v4_ofen_temperatur') | float(0) }}"
+      note: >-
+        Stellschrauben zum Nachjustieren. spitze_min: ab welchem 15-min-Maximum ein Abfall als 'Spitze vorbei'
+        zählt. min_flamme: Mindestdauer der Flammphase in Sekunden (35 min). ende_schwelle: unter dieser
+        Abgastemperatur gilt die Flamme als vorbei. ende_abfall: Abfall unter das 15-min-Maximum, der als Ende gilt.
+        glut_start: Klappenstellung zu Beginn der Glutphase. glut_zu_unter: unter dieser Temperatur wird auf 300
+        weiter geschlossen. ausbrand_unter: unter dieser Temperatur wird im Ausbrand auf 200 geschlossen.
+    - if:
+        - condition: template
+          value_template: "{{ modus == 'anheizen' }}"
+      then:
+        - wait_template: "{{ states('sensor.ofensteuerung_v4_ofen_temperatur') | float(0) > 250 }}"
+          timeout:
+            minutes: 90
+          note: Anzünden mit offener Klappe. Bis 90 min Zeit für die Selbstentzündung.
+        - if:
+            - condition: template
+              value_template: "{{ not wait.completed }}"
+          then:
+            - action: number.set_value
+              target:
+                entity_id: number.ofensteuerung_v4_stepper_feinsteuerung
+              data:
+                value: 300
+            - stop: Feuer hat innerhalb 90 min keine 250 °C erreicht – Klappe auf 300.
+      else:
+        - wait_template: "{{ states('sensor.ofensteuerung_v4_ofen_temperatur') | float(0) > t0 + 50 }}"
+          timeout:
+            minutes: 15
+          note: >-
+            Nachlegen: Firmware hat auf 1000 geöffnet. Warten, bis das neue Holz brennt (+50 °C gegenüber dem Klick),
+            sonst würde der Temperatureinbruch beim Türöffnen als 'Spitze vorbei' gelten.
+    - variables:
+        flame_start: "{{ now().isoformat() }}"
+      note: Beginn der Flammphase (Feuer brennt). Ab hier läuft die Mindestdauer min_flamme.
+    - repeat:
+        sequence:
+          - variables:
+              current: "{{ states('number.ofensteuerung_v4_stepper_feinsteuerung') | float(2100) }}"
+              t: "{{ states('sensor.ofensteuerung_v4_ofen_temperatur') }}"
+              target: >-
+                {% set x = t | float(0) %}{% if x > 520 %}300{% elif x > 485 %}375{% elif x > 450 %}425{% elif x > 350 %}500{% else %}700{% endif %}
+            note: >-
+              Flammphase: 250–350 °C → 700, 350–450 → 500, 450–485 → 425, 485–520 → 375, über 520 → 300 (Notbremse).
+              Die 425er-Stufe verhindert den Einbruch, den der direkte Sprung 500 → 375 verursacht hat.
+          - if:
+              - condition: template
+                value_template: "{{ is_number(t) and target | int < current | int }}"
+            then:
+              - action: number.set_value
+                target:
+                  entity_id: number.ofensteuerung_v4_stepper_feinsteuerung
+                data:
+                  value: "{{ target }}"
+            note: Nur schließen, nie öffnen.
+          - wait_for_trigger:
+              - trigger: state
+                entity_id: sensor.ofensteuerung_v4_ofen_temperatur
+            timeout:
+              minutes: 2
+            note: Auf den nächsten Messwert warten (Sensor sendet alle ~30 s), höchstens 2 Minuten.
+          - if:
+              - condition: template
+                value_template: >-
+                  {% set t = states('sensor.ofensteuerung_v4_ofen_temperatur') %}{% set m = states('sensor.esszimmer_ofensteuerung_ofen_temperatur_max_15_min') %}{% set tief = is_number(t) and (t | float < ende_schwelle or (is_number(m) and m | float >= spitze_min and t | float < m | float - ende_abfall)) %}{% set frueh = (now() - as_datetime(flame_start)).total_seconds() < min_flamme %}{{ tief and not frueh }}
+            then:
+              - delay:
+                  minutes: 3
+            note: >-
+              Prüfung NACH dem neuen Messwert: Sieht es nach Ende der Flammphase aus, 3 Minuten warten.
+              Die until-Bedingung prüft danach erneut, so zählt nur ein anhaltender Abfall und kein einzelner Messwert.
+        until:
+          - condition: template
+            value_template: >-
+              {% set t = states('sensor.ofensteuerung_v4_ofen_temperatur') %}{% set m = states('sensor.esszimmer_ofensteuerung_ofen_temperatur_max_15_min') %}{% set tief = is_number(t) and (t | float < ende_schwelle or (is_number(m) and m | float >= spitze_min and t | float < m | float - ende_abfall)) %}{% set frueh = (now() - as_datetime(flame_start)).total_seconds() < min_flamme %}{% set erloschen = is_number(t) and t | float < 200 %}{% set zu_lange = (now() - as_datetime(start)).total_seconds() > 10800 %}{{ erloschen or zu_lange or (tief and not frueh) }}
+            note: >-
+              Ende Flammphase: Mindestdauer um und Abgas anhaltend unter ende_schwelle bzw. ende_abfall unter dem
+              15-min-Maximum. Sofort beendet bei erloschenem Feuer (< 200 °C) oder nach 3 h Sicherheitsgrenze.
+    - if:
+        - condition: numeric_state
+          entity_id: sensor.ofensteuerung_v4_ofen_temperatur
+          above: 250
+      then:
+        - action: number.set_value
+          target:
+            entity_id: number.ofensteuerung_v4_stepper_feinsteuerung
+          data:
+            value: "{{ glut_start }}"
+      note: >-
+        Glutphase, Stufe 1: nicht sofort fast zu, die Restglut braucht noch Luft (CO).
+        Ist es schon unter 250 °C, wird diese Stufe übersprungen.
+    - wait_template: "{{ states('sensor.ofensteuerung_v4_ofen_temperatur') | float(999) < glut_zu_unter }}"
+      timeout:
+        hours: 3
+    - action: number.set_value
+      target:
+        entity_id: number.ofensteuerung_v4_stepper_feinsteuerung
+      data:
+        value: 300
+      note: "Glutphase, Stufe 2: unter glut_zu_unter weiter schließen."
+    - wait_template: "{{ states('sensor.ofensteuerung_v4_ofen_temperatur') | float(999) < ausbrand_unter }}"
+      timeout:
+        hours: 3
+    - if:
+        - condition: numeric_state
+          entity_id: sensor.gw1200a_outdoor_temperature
+          above: 0
+      then:
+        - action: number.set_value
+          target:
+            entity_id: number.ofensteuerung_v4_stepper_feinsteuerung
+          data:
+            value: 200
+      else:
+        - action: number.set_value
+          target:
+            entity_id: number.ofensteuerung_v4_stepper_feinsteuerung
+          data:
+            value: 300
+      note: "Ausbrand: unter ausbrand_unter bei Außentemperatur über 0 °C auf 200, bei Frost auf 300."
